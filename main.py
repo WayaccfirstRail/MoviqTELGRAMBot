@@ -598,6 +598,26 @@ async def admin_move(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text("ماذا تريد أن تحرك؟", reply_markup=reply_markup)
 
 
+async def admin_site(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Control site status with ON/OFF buttons (admin only)."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    
+    global site_status
+    current_status = "تشغيل" if site_status else "إيقاف"
+    
+    keyboard = [
+        [
+            InlineKeyboardButton(f"ON {'✅' if site_status else ''}", callback_data="site_on"),
+            InlineKeyboardButton(f"OFF {'❌' if not site_status else ''}", callback_data="site_off")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(f"حالة الموقع الحالية: **{current_status}**\n\nاختر الحالة الجديدة:", reply_markup=reply_markup, parse_mode='Markdown')
+
+
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button presses from the inline keyboard."""
     query = update.callback_query
@@ -746,6 +766,20 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             admin_context[user_id] = {"action": "move_series", "item_idx": idx, "item_name": SERIES[idx]}
             waiting_for_input[user_id] = "move_position"
             await query.message.reply_text(f"اكتب الموضع الجديد للمسلسل '{SERIES[idx]}' (من 1 إلى {len(SERIES)}):")
+    
+    # Handle site status changes
+    elif query.data == "site_on":
+        if not user_is_admin(user_id):
+            return
+        global site_status
+        site_status = True
+        await query.message.reply_text("✅ تم تفعيل الموقع - سيظهر كمعتاد عند فحص حالة الموقع")
+    
+    elif query.data == "site_off":
+        if not user_is_admin(user_id):
+            return
+        site_status = False
+        await query.message.reply_text("❌ تم إيقاف الموقع - سيظهر كمعطل عند فحص حالة الموقع")
 
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -797,6 +831,7 @@ def main() -> None:
     application.add_handler(CommandHandler("add", admin_add))
     application.add_handler(CommandHandler("remove", admin_remove))
     application.add_handler(CommandHandler("move", admin_move))
+    application.add_handler(CommandHandler("site", admin_site))
 
     # Handle admin input when waiting for data
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_input))
