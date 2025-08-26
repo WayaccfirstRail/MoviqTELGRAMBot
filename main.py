@@ -115,6 +115,8 @@ command_states = {
 waiting_for_input: dict[int, str] = {}
 # Store additional context for admin operations
 admin_context: dict[int, dict] = {}
+# Site status control - affects status command behavior
+site_status: bool = True  # True = ON, False = OFF
 
 
 # Static catalog taken from Captain M website (as of Aug 2025).  Each
@@ -220,13 +222,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Provide a list of available commands."""
-    if update.effective_user.id in banned_users:
+    """Provide a list of available commands (admin only)."""
+    user_id = update.effective_user.id
+    if user_id in banned_users:
         return
-    # Check if help command is enabled
-    if not command_states.get("help", True):
-        await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
         return
+    
     help_text = (
         "الأوامر المتاحة:\n"
         "/start - بدء المحادثة وعرض الأزرار\n"
@@ -248,6 +251,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/add - إضافة فيلم أو مسلسل جديد\n"
             "/remove - حذف فيلم أو مسلسل\n"
             "/move - تحريك فيلم أو مسلسل إلى موضع جديد\n"
+            "/site - تحكم في حالة الموقع (ON/OFF)\n"
         )
     await update.message.reply_text(help_text)
 
@@ -268,10 +272,10 @@ async def movies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     # Compose the movie list in modern format
     if MOVIES:
-        text = "🎬 🎆 ***قائمة الأفلام المتاحة*** 🎆\n\n"
+        text = "🎬 ***قائمة الأفلام المتاحة***\n\n"
         for idx, title in enumerate(MOVIES, 1):
             text += f"🎞️ ***{idx}.*** __**{title}**__\n\n"
-        text += f"✨ ***المجموع: {len(MOVIES)} فيلم*** ✨"
+        text += f"***المجموع: {len(MOVIES)} فيلم***"
     else:
         text = "🚫 ***لا توجد أفلام متاحة حاليًا***"
     await update.message.reply_text(text, parse_mode='Markdown')
