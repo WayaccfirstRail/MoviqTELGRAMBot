@@ -1,0 +1,448 @@
+"""
+Telegram Bot for Captain M Platform (Arabic)
+-------------------------------------------
+
+This script implements a Telegram bot in Python that mirrors basic
+functionality of the Captain M website.  It lists the movies and
+series currently available on the site, checks the website status,
+and provides a suite of administrative commands for managing users
+and invite codes.  All bot responses are written in Arabic to
+provide a native experience for users in the Middle East and North
+Africa region.
+
+Key Features
+============
+
+* **Static catalog of movies and series** – The bot includes
+  a pre‑copied list of the titles currently displayed on
+  https://captainm.netlify.app/.  When the `/movies` or `/series`
+  command is invoked (or via inline buttons), the bot returns
+  these titles in a neatly formatted list.
+* **Website status check** – The `/status` command performs a
+  simple HTTP GET request to the home page to determine whether
+  the site is reachable.  If the request succeeds, it replies
+  that the site is online; otherwise it reports that the site is
+  under maintenance.
+* **Invite codes** – Each user sees the current invite code when
+  they start interacting with the bot.  An admin can change this
+  code on the fly via `/change_invite <code>`.  Users can also
+  request the current code at any time using `/invite`.
+* **Administrative controls** – A list of admin user IDs is
+  defined in the `ADMIN_IDS` constant.  Admins can ban, block or
+  flag users by ID using `/ban`, `/block` or `/flag` commands.
+  Banned users will be silently ignored by the bot.  Blocked
+  users are tracked but still receive a warning when they try
+  interacting.  Flagged users are simply noted for later review.
+
+To deploy this bot on Replit or any other Python environment,
+install the following dependencies:
+
+```
+pip install python-telegram-bot==20.3 requests beautifulsoup4
+```
+
+Replace `YOUR_BOT_TOKEN` below with your actual Telegram bot token
+and populate `ADMIN_IDS` with your Telegram user ID(s).  You can
+find your own user ID by sending a message to
+@userinfobot on Telegram.
+
+Note:  The list of movies and series here reflects the
+catalogue as of August 2025.  If the website updates, you should
+edit the `MOVIES` and `SERIES` lists accordingly.
+"""
+
+import os
+import logging
+from typing import List, Optional
+
+import requests
+from bs4 import BeautifulSoup
+from telegram import (
+    Update,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    MessageHandler,
+    filters,
+)
+
+
+# -----------------------------------------------------------------------------
+# Configuration
+#
+# Insert your bot token below.  For security, you may prefer to set it as an
+# environment variable called BOT_TOKEN on Replit instead of writing it
+# directly in code (e.g. TOKEN = os.environ.get('BOT_TOKEN')).
+# -----------------------------------------------------------------------------
+
+# TODO: Replace this with your actual bot token, or set BOT_TOKEN in the
+# environment and leave TOKEN as None to fetch it automatically.
+TOKEN: Optional[str] = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+
+# List of Telegram user IDs who have administrative privileges.  Replace
+# the example IDs with actual numeric IDs.  Admins can ban/block/flag users
+# and change the invite code.
+ADMIN_IDS: List[int] = [123456789, 987654321]
+
+
+# Invite code shown to regular users.  Admins can change this value at
+# runtime via the /change_invite command.
+invite_code: str = "ABCDEF"
+
+# In‑memory data structures for tracking user status.  You could persist
+# these sets to disk (e.g. JSON file) for a long‑running bot, but for
+# simplicity they live in RAM.
+banned_users: set[int] = set()
+blocked_users: set[int] = set()
+flagged_users: set[int] = set()
+
+
+# Static catalog taken from Captain M website (as of Aug 2025).  Each
+# entry is a movie title in Arabic.
+MOVIES: List[str] = [
+    "أحمد و أحمد",
+    "روكي الغلابة",
+    "الشاطر",
+    "في عز الظهر",
+    "المشروع X",
+    "ريستارت",
+    "الصفا ثانوية بنات",
+    "نجوم الساحل",
+]
+
+# Static series list.  At the time of writing there was only one series.
+SERIES: List[str] = [
+    "لعبة الحبار",
+]
+
+
+# -----------------------------------------------------------------------------
+# Helper functions
+# -----------------------------------------------------------------------------
+
+def user_is_admin(user_id: int) -> bool:
+    """Return True if the given user ID belongs to an administrator."""
+    return user_id in ADMIN_IDS
+
+
+def fetch_website_status(url: str = "https://captainm.netlify.app") -> bool:
+    """Check whether the target website is reachable.
+
+    Performs a simple GET request and returns True if the HTTP status
+    code is 200.  Any exception or non‑200 code is interpreted as the
+    site being down or under maintenance.
+    """
+    try:
+        response = requests.get(url, timeout=10)
+        return response.status_code == 200
+    except requests.RequestException:
+        return False
+
+
+def parse_titles_from_page(url: str, selector: str = "h3") -> List[str]:
+    """Attempt to scrape titles from a page on the Captain M site.
+
+    This function is not currently used because the site loads data
+    dynamically via JavaScript and the static HTML does not contain
+    the lists we need.  It is provided here for completeness should
+    the site change its implementation.  You can adjust the `selector`
+    parameter to target the correct element for titles.
+
+    Args:
+        url:  URL of the page to scrape (e.g. '/movies' or '/series').
+        selector: CSS selector for the elements containing titles.
+
+    Returns:
+        A list of unique title strings.
+    """
+    try:
+        resp = requests.get(url, timeout=10)
+        soup = BeautifulSoup(resp.content, "html.parser")
+        titles = [elem.get_text(strip=True) for elem in soup.select(selector)]
+        # Remove duplicates while preserving order
+        unique: List[str] = []
+        for t in titles:
+            if t and t not in unique:
+                unique.append(t)
+        return unique
+    except requests.RequestException:
+        return []
+
+
+# -----------------------------------------------------------------------------
+# Command and callback handlers
+# -----------------------------------------------------------------------------
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send a welcome message with quick‑action buttons when the user starts."""
+    user_id = update.effective_user.id
+    # If the user is banned, ignore the command
+    if user_id in banned_users:
+        return
+    # Craft the welcome message in Arabic
+    welcome_text = (
+        f"مرحبًا {update.effective_user.first_name}!\n\n"
+        "هذا هو بوت كابتن م حيث يمكنك معرفة الأفلام والمسلسلات المتاحة "
+        "وحالة الموقع الحالية.\n\n"
+        f"رمز الدعوة الخاص بك هو: {invite_code}\n\n"
+        "استخدم الأزرار أدناه أو الأوامر النصية لاستكشاف المحتوى."
+    )
+    # Inline keyboard with options
+    keyboard = [
+        [
+            InlineKeyboardButton("🎬 الأفلام", callback_data="movies"),
+            InlineKeyboardButton("📺 المسلسلات", callback_data="series"),
+        ],
+        [InlineKeyboardButton("🌐 حالة الموقع", callback_data="status")],
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(welcome_text, reply_markup=reply_markup)
+
+
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Provide a list of available commands."""
+    if update.effective_user.id in banned_users:
+        return
+    help_text = (
+        "الأوامر المتاحة:\n"
+        "/start - بدء المحادثة وعرض الأزرار\n"
+        "/movies - عرض قائمة الأفلام المتاحة\n"
+        "/series - عرض قائمة المسلسلات المتاحة\n"
+        "/status - التحقق من حالة موقع كابتن م\n"
+        "/invite - عرض رمز الدعوة الحالي\n"
+        "/help - عرض هذه الرسالة\n"
+    )
+    # Only show admin commands to admins
+    if user_is_admin(update.effective_user.id):
+        help_text += (
+            "\nأوامر الإدارة:\n"
+            "/ban <رقم المستخدم> - حظر مستخدم من استخدام البوت\n"
+            "/block <رقم المستخدم> - منع مستخدم مؤقتًا وإعلامه\n"
+            "/flag <رقم المستخدم> - وضع علامة على مستخدم كمشتبه به\n"
+            "/change_invite <رمز> - تغيير رمز الدعوة\n"
+        )
+    await update.message.reply_text(help_text)
+
+
+async def movies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send the list of movies."""
+    user_id = update.effective_user.id
+    if user_id in banned_users:
+        return
+    if user_id in blocked_users:
+        await update.message.reply_text(
+            "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
+        )
+        return
+    # Compose the movie list
+    if MOVIES:
+        lines = [f"{idx+1}. {title}" for idx, title in enumerate(MOVIES)]
+        text = "قائمة الأفلام المتاحة:\n" + "\n".join(lines)
+    else:
+        text = "لا توجد أفلام متاحة حاليًا."
+    await update.message.reply_text(text)
+
+
+async def series_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Send the list of series."""
+    user_id = update.effective_user.id
+    if user_id in banned_users:
+        return
+    if user_id in blocked_users:
+        await update.message.reply_text(
+            "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
+        )
+        return
+    if SERIES:
+        lines = [f"{idx+1}. {title}" for idx, title in enumerate(SERIES)]
+        text = "قائمة المسلسلات المتاحة:\n" + "\n".join(lines)
+    else:
+        text = "لا توجد مسلسلات متاحة حاليًا."
+    await update.message.reply_text(text)
+
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Report whether the Captain M website is online or under maintenance."""
+    user_id = update.effective_user.id
+    if user_id in banned_users:
+        return
+    if user_id in blocked_users:
+        await update.message.reply_text(
+            "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
+        )
+        return
+    online = fetch_website_status()
+    if online:
+        text = "الموقع يعمل بشكل طبيعي حاليًا."
+    else:
+        text = "الموقع تحت الصيانة أو غير متاح في الوقت الحالي."
+    await update.message.reply_text(text)
+
+
+async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Return the current invite code."""
+    user_id = update.effective_user.id
+    if user_id in banned_users:
+        return
+    if user_id in blocked_users:
+        await update.message.reply_text(
+            "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
+        )
+        return
+    await update.message.reply_text(f"رمز الدعوة الحالي هو: {invite_code}")
+
+
+async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Ban a user by their Telegram ID (admin only)."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("يرجى إدخال رقم المستخدم المراد حظره.")
+        return
+    target_id = int(context.args[0])
+    banned_users.add(target_id)
+    # Also remove from other sets if present
+    blocked_users.discard(target_id)
+    flagged_users.discard(target_id)
+    await update.message.reply_text(
+        f"تم حظر المستخدم برقم {target_id} من استخدام هذا البوت."
+    )
+
+
+async def admin_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Temporarily block a user (admin only)."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("يرجى إدخال رقم المستخدم المراد منعه.")
+        return
+    target_id = int(context.args[0])
+    if target_id in banned_users:
+        await update.message.reply_text("هذا المستخدم محظور بالفعل.")
+        return
+    blocked_users.add(target_id)
+    await update.message.reply_text(
+        f"تم منع المستخدم برقم {target_id} مؤقتًا من استخدام هذا البوت."
+    )
+
+
+async def admin_flag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Flag a user as suspicious (admin only)."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text("يرجى إدخال رقم المستخدم المراد وضع علامة عليه.")
+        return
+    target_id = int(context.args[0])
+    flagged_users.add(target_id)
+    await update.message.reply_text(
+        f"تم وضع علامة على المستخدم برقم {target_id} كمشتبه به للمراجعة."
+    )
+
+
+async def admin_change_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Allow admins to change the invite code."""
+    global invite_code
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    if not context.args:
+        await update.message.reply_text("يرجى إدخال رمز الدعوة الجديد.")
+        return
+    new_code = context.args[0]
+    invite_code = new_code
+    await update.message.reply_text(f"تم تحديث رمز الدعوة إلى: {invite_code}")
+
+
+async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle button presses from the inline keyboard."""
+    query = update.callback_query
+    await query.answer()
+    user_id = query.from_user.id
+    # Ignore interactions from banned users
+    if user_id in banned_users:
+        return
+    if query.data == "movies":
+        # Use a regular message instead of editing to maintain clarity
+        lines = [f"{idx+1}. {title}" for idx, title in enumerate(MOVIES)]
+        text = "قائمة الأفلام المتاحة:\n" + "\n".join(lines)
+        await query.message.reply_text(text)
+    elif query.data == "series":
+        lines = [f"{idx+1}. {title}" for idx, title in enumerate(SERIES)]
+        text = "قائمة المسلسلات المتاحة:\n" + "\n".join(lines)
+        await query.message.reply_text(text)
+    elif query.data == "status":
+        online = fetch_website_status()
+        if online:
+            text = "الموقع يعمل بشكل طبيعي حاليًا."
+        else:
+            text = "الموقع تحت الصيانة أو غير متاح في الوقت الحالي."
+        await query.message.reply_text(text)
+
+
+async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Respond to unknown commands politely."""
+    if update.effective_user.id in banned_users:
+        return
+    await update.message.reply_text("عذرًا، لم أفهم هذا الأمر. استخدم /help لمعرفة الأوامر المتاحة.")
+
+
+# -----------------------------------------------------------------------------
+# Bot initialization
+# -----------------------------------------------------------------------------
+
+def main() -> None:
+    """Start the bot and register handlers."""
+    # Configure logging to standard output for debugging
+    logging.basicConfig(
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        level=logging.INFO,
+    )
+
+    if not TOKEN or TOKEN == "YOUR_BOT_TOKEN":
+        raise RuntimeError(
+            "Please set your Telegram bot token in the TOKEN variable or as the BOT_TOKEN environment variable."
+        )
+
+    # Create the application instance
+    application = Application.builder().token(TOKEN).build()
+
+    # Register command handlers
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("help", help_command))
+    application.add_handler(CommandHandler("movies", movies_command))
+    application.add_handler(CommandHandler("series", series_command))
+    application.add_handler(CommandHandler("status", status_command))
+    application.add_handler(CommandHandler("invite", invite_command))
+
+    # Admin commands
+    application.add_handler(CommandHandler("ban", admin_ban))
+    application.add_handler(CommandHandler("block", admin_block))
+    application.add_handler(CommandHandler("flag", admin_flag))
+    application.add_handler(CommandHandler("change_invite", admin_change_invite))
+
+    # Callback query handler for inline buttons
+    application.add_handler(CallbackQueryHandler(handle_callback))
+
+    # Unknown command handler should be last
+    application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
+
+    # Start the bot
+    application.run_polling()
+
+
+if __name__ == "__main__":
+    main()
