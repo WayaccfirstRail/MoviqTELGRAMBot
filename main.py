@@ -113,6 +113,8 @@ command_states = {
 
 # Temporary storage for admin commands waiting for user input
 waiting_for_input: dict[int, str] = {}
+# Store additional context for admin operations
+admin_context: dict[int, dict] = {}
 
 
 # Static catalog taken from Captain M website (as of Aug 2025).  Each
@@ -243,6 +245,9 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/flag <رقم المستخدم> - وضع علامة على مستخدم كمشتبه به\n"
             "/change_invite <رمز> - تغيير رمز الدعوة\n"
             "/toggle <أمر> - تفعيل/تعطيل الأوامر (movies, series, status, invite, help)\n"
+            "/add - إضافة فيلم أو مسلسل جديد\n"
+            "/remove - حذف فيلم أو مسلسل\n"
+            "/move - تحريك فيلم أو مسلسل إلى موضع جديد\n"
         )
     await update.message.reply_text(help_text)
 
@@ -261,13 +266,15 @@ async def movies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     if not command_states.get("movies", True):
         await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
         return
-    # Compose the movie list
+    # Compose the movie list in modern format
     if MOVIES:
-        lines = [f"{idx+1}. {title}" for idx, title in enumerate(MOVIES)]
-        text = "قائمة الأفلام المتاحة:\n" + "\n".join(lines)
+        text = "🎬 ** قائمة الأفلام المتاحة **\n\n"
+        for idx, title in enumerate(MOVIES, 1):
+            text += f"▫️ **{idx}.** `{title}`\n"
+        text += f"\n📊 **المجموع:** {len(MOVIES)} فيلم"
     else:
-        text = "لا توجد أفلام متاحة حاليًا."
-    await update.message.reply_text(text)
+        text = "❌ **لا توجد أفلام متاحة حاليًا**"
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 
 async def series_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -285,11 +292,13 @@ async def series_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
         return
     if SERIES:
-        lines = [f"{idx+1}. {title}" for idx, title in enumerate(SERIES)]
-        text = "قائمة المسلسلات المتاحة:\n" + "\n".join(lines)
+        text = "📺 **قائمة المسلسلات المتاحة**\n\n"
+        for idx, title in enumerate(SERIES, 1):
+            text += f"▫️ **{idx}.** `{title}`\n"
+        text += f"\n📊 **المجموع:** {len(SERIES)} مسلسل"
     else:
-        text = "لا توجد مسلسلات متاحة حاليًا."
-    await update.message.reply_text(text)
+        text = "❌ **لا توجد مسلسلات متاحة حاليًا**"
+    await update.message.reply_text(text, parse_mode='Markdown')
 
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -490,8 +499,99 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         invite_code = user_input
         await update.message.reply_text(f"تم تحديث رمز الدعوة إلى: {invite_code}")
     
+    elif command_type == "add_movie_name":
+        MOVIES.append(user_input.strip())
+        await update.message.reply_text(f"✅ تم إضافة الفيلم: {user_input.strip()}")
+    
+    elif command_type == "add_series_name":
+        SERIES.append(user_input.strip())
+        await update.message.reply_text(f"✅ تم إضافة المسلسل: {user_input.strip()}")
+    
+    elif command_type == "move_position":
+        if user_id not in admin_context:
+            await update.message.reply_text("خطأ: لم يتم العثور على بيانات العملية")
+            return
+            
+        try:
+            new_position = int(user_input.strip()) - 1  # Convert to 0-based index
+            context = admin_context[user_id]
+            
+            if context["action"] == "move_movie":
+                if 0 <= new_position < len(MOVIES):
+                    old_idx = context["item_idx"]
+                    movie_name = MOVIES.pop(old_idx)
+                    MOVIES.insert(new_position, movie_name)
+                    await update.message.reply_text(f"✅ تم نقل الفيلم '{movie_name}' إلى الموضع {new_position + 1}")
+                else:
+                    await update.message.reply_text(f"موضع غير صحيح. يجب أن يكون بين 1 و {len(MOVIES)}")
+            
+            elif context["action"] == "move_series":
+                if 0 <= new_position < len(SERIES):
+                    old_idx = context["item_idx"]
+                    series_name = SERIES.pop(old_idx)
+                    SERIES.insert(new_position, series_name)
+                    await update.message.reply_text(f"✅ تم نقل المسلسل '{series_name}' إلى الموضع {new_position + 1}")
+                else:
+                    await update.message.reply_text(f"موضع غير صحيح. يجب أن يكون بين 1 و {len(SERIES)}")
+                    
+        except ValueError:
+            await update.message.reply_text("يرجى إدخال رقم صحيح")
+    
     # Remove from waiting list
     del waiting_for_input[user_id]
+    if user_id in admin_context:
+        del admin_context[user_id]
+
+
+async def admin_add(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Add a new movie or series (admin only)."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("🎬 فيلم", callback_data="add_movie"),
+            InlineKeyboardButton("📺 مسلسل", callback_data="add_series")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("ماذا تريد أن تضيف؟", reply_markup=reply_markup)
+
+
+async def admin_remove(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Remove a movie or series (admin only)."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("🎬 أفلام", callback_data="remove_movie"),
+            InlineKeyboardButton("📺 مسلسلات", callback_data="remove_series")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("ماذا تريد أن تحذف؟", reply_markup=reply_markup)
+
+
+async def admin_move(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Move a movie or series to different position (admin only)."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    
+    keyboard = [
+        [
+            InlineKeyboardButton("🎬 أفلام", callback_data="move_movie"),
+            InlineKeyboardButton("📺 مسلسلات", callback_data="move_series")
+        ]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text("ماذا تريد أن تحرك؟", reply_markup=reply_markup)
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -506,17 +606,27 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not command_states.get("movies", True):
             await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
             return
-        # Use a regular message instead of editing to maintain clarity
-        lines = [f"{idx+1}. {title}" for idx, title in enumerate(MOVIES)]
-        text = "قائمة الأفلام المتاحة:\n" + "\n".join(lines)
-        await query.message.reply_text(text)
+        # Use modern format for inline callback
+        if MOVIES:
+            text = "🎬 **قائمة الأفلام المتاحة**\n\n"
+            for idx, title in enumerate(MOVIES, 1):
+                text += f"▫️ **{idx}.** `{title}`\n"
+            text += f"\n📊 **المجموع:** {len(MOVIES)} فيلم"
+        else:
+            text = "❌ **لا توجد أفلام متاحة حاليًا**"
+        await query.message.reply_text(text, parse_mode='Markdown')
     elif query.data == "series":
         if not command_states.get("series", True):
             await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
             return
-        lines = [f"{idx+1}. {title}" for idx, title in enumerate(SERIES)]
-        text = "قائمة المسلسلات المتاحة:\n" + "\n".join(lines)
-        await query.message.reply_text(text)
+        if SERIES:
+            text = "📺 **قائمة المسلسلات المتاحة**\n\n"
+            for idx, title in enumerate(SERIES, 1):
+                text += f"▫️ **{idx}.** `{title}`\n"
+            text += f"\n📊 **المجموع:** {len(SERIES)} مسلسل"
+        else:
+            text = "❌ **لا توجد مسلسلات متاحة حاليًا**"
+        await query.message.reply_text(text, parse_mode='Markdown')
     elif query.data == "status":
         if not command_states.get("status", True):
             await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
@@ -527,6 +637,111 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         else:
             text = "الموقع تحت الصيانة أو غير متاح في الوقت الحالي."
         await query.message.reply_text(text)
+    
+    # Handle admin operations
+    elif query.data == "add_movie":
+        if not user_is_admin(user_id):
+            return
+        waiting_for_input[user_id] = "add_movie_name"
+        await query.message.reply_text("اكتب اسم الفيلم الجديد:")
+    
+    elif query.data == "add_series":
+        if not user_is_admin(user_id):
+            return
+        waiting_for_input[user_id] = "add_series_name"
+        await query.message.reply_text("اكتب اسم المسلسل الجديد:")
+    
+    elif query.data == "remove_movie":
+        if not user_is_admin(user_id) or not MOVIES:
+            if not MOVIES:
+                await query.message.reply_text("لا توجد أفلام لحذفها")
+            return
+        
+        # Create buttons for each movie
+        keyboard = []
+        for idx, movie in enumerate(MOVIES):
+            keyboard.append([InlineKeyboardButton(f"{idx+1}. {movie}", callback_data=f"del_movie_{idx}")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("اختر الفيلم الذي تريد حذفه:", reply_markup=reply_markup)
+    
+    elif query.data == "remove_series":
+        if not user_is_admin(user_id) or not SERIES:
+            if not SERIES:
+                await query.message.reply_text("لا توجد مسلسلات لحذفها")
+            return
+        
+        # Create buttons for each series
+        keyboard = []
+        for idx, series in enumerate(SERIES):
+            keyboard.append([InlineKeyboardButton(f"{idx+1}. {series}", callback_data=f"del_series_{idx}")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("اختر المسلسل الذي تريد حذفه:", reply_markup=reply_markup)
+    
+    elif query.data == "move_movie":
+        if not user_is_admin(user_id) or not MOVIES:
+            if not MOVIES:
+                await query.message.reply_text("لا توجد أفلام لتحريكها")
+            return
+        
+        # Create buttons for each movie
+        keyboard = []
+        for idx, movie in enumerate(MOVIES):
+            keyboard.append([InlineKeyboardButton(f"{idx+1}. {movie}", callback_data=f"move_movie_{idx}")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("اختر الفيلم الذي تريد تحريكه:", reply_markup=reply_markup)
+    
+    elif query.data == "move_series":
+        if not user_is_admin(user_id) or not SERIES:
+            if not SERIES:
+                await query.message.reply_text("لا توجد مسلسلات لتحريكها")
+            return
+        
+        # Create buttons for each series
+        keyboard = []
+        for idx, series in enumerate(SERIES):
+            keyboard.append([InlineKeyboardButton(f"{idx+1}. {series}", callback_data=f"move_series_{idx}")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        await query.message.reply_text("اختر المسلسل الذي تريد تحريكه:", reply_markup=reply_markup)
+    
+    # Handle delete operations
+    elif query.data.startswith("del_movie_"):
+        if not user_is_admin(user_id):
+            return
+        idx = int(query.data.split("_")[2])
+        if 0 <= idx < len(MOVIES):
+            deleted_movie = MOVIES.pop(idx)
+            await query.message.reply_text(f"تم حذف الفيلم: {deleted_movie}")
+    
+    elif query.data.startswith("del_series_"):
+        if not user_is_admin(user_id):
+            return
+        idx = int(query.data.split("_")[2])
+        if 0 <= idx < len(SERIES):
+            deleted_series = SERIES.pop(idx)
+            await query.message.reply_text(f"تم حذف المسلسل: {deleted_series}")
+    
+    # Handle move operations
+    elif query.data.startswith("move_movie_"):
+        if not user_is_admin(user_id):
+            return
+        idx = int(query.data.split("_")[2])
+        if 0 <= idx < len(MOVIES):
+            admin_context[user_id] = {"action": "move_movie", "item_idx": idx, "item_name": MOVIES[idx]}
+            waiting_for_input[user_id] = "move_position"
+            await query.message.reply_text(f"اكتب الموضع الجديد للفيلم '{MOVIES[idx]}' (من 1 إلى {len(MOVIES)}):")
+    
+    elif query.data.startswith("move_series_"):
+        if not user_is_admin(user_id):
+            return
+        idx = int(query.data.split("_")[2])
+        if 0 <= idx < len(SERIES):
+            admin_context[user_id] = {"action": "move_series", "item_idx": idx, "item_name": SERIES[idx]}
+            waiting_for_input[user_id] = "move_position"
+            await query.message.reply_text(f"اكتب الموضع الجديد للمسلسل '{SERIES[idx]}' (من 1 إلى {len(SERIES)}):")
 
 
 async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -573,8 +788,11 @@ def main() -> None:
     # Callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(handle_callback))
 
-    # Admin toggle command
+    # Admin management commands
     application.add_handler(CommandHandler("toggle", admin_toggle))
+    application.add_handler(CommandHandler("add", admin_add))
+    application.add_handler(CommandHandler("remove", admin_remove))
+    application.add_handler(CommandHandler("move", admin_move))
 
     # Handle admin input when waiting for data
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_input))
