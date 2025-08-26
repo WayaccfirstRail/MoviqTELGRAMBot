@@ -102,6 +102,18 @@ banned_users: set[int] = set()
 blocked_users: set[int] = set()
 flagged_users: set[int] = set()
 
+# Command toggle states - admins can enable/disable commands
+command_states = {
+    "movies": True,
+    "series": True,
+    "status": True,
+    "invite": True,
+    "help": True
+}
+
+# Temporary storage for admin commands waiting for user input
+waiting_for_input: dict[int, str] = {}
+
 
 # Static catalog taken from Captain M website (as of Aug 2025).  Each
 # entry is a movie title in Arabic.
@@ -209,6 +221,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     """Provide a list of available commands."""
     if update.effective_user.id in banned_users:
         return
+    # Check if help command is enabled
+    if not command_states.get("help", True):
+        await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
+        return
     help_text = (
         "الأوامر المتاحة:\n"
         "/start - بدء المحادثة وعرض الأزرار\n"
@@ -226,6 +242,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/block <رقم المستخدم> - منع مستخدم مؤقتًا وإعلامه\n"
             "/flag <رقم المستخدم> - وضع علامة على مستخدم كمشتبه به\n"
             "/change_invite <رمز> - تغيير رمز الدعوة\n"
+            "/toggle <أمر> - تفعيل/تعطيل الأوامر (movies, series, status, invite, help)\n"
         )
     await update.message.reply_text(help_text)
 
@@ -239,6 +256,10 @@ async def movies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
         )
+        return
+    # Check if movies command is enabled
+    if not command_states.get("movies", True):
+        await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
         return
     # Compose the movie list
     if MOVIES:
@@ -259,6 +280,10 @@ async def series_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
         )
         return
+    # Check if series command is enabled
+    if not command_states.get("series", True):
+        await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
+        return
     if SERIES:
         lines = [f"{idx+1}. {title}" for idx, title in enumerate(SERIES)]
         text = "قائمة المسلسلات المتاحة:\n" + "\n".join(lines)
@@ -276,6 +301,10 @@ async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text(
             "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
         )
+        return
+    # Check if status command is enabled
+    if not command_states.get("status", True):
+        await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
         return
     online = fetch_website_status()
     if online:
@@ -295,6 +324,10 @@ async def invite_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
         )
         return
+    # Check if invite command is enabled
+    if not command_states.get("invite", True):
+        await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
+        return
     await update.message.reply_text(f"رمز الدعوة الحالي هو: {invite_code}")
 
 
@@ -304,17 +337,20 @@ async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not user_is_admin(user_id):
         await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
         return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("يرجى إدخال رقم المستخدم المراد حظره.")
-        return
-    target_id = int(context.args[0])
-    banned_users.add(target_id)
-    # Also remove from other sets if present
-    blocked_users.discard(target_id)
-    flagged_users.discard(target_id)
-    await update.message.reply_text(
-        f"تم حظر المستخدم برقم {target_id} من استخدام هذا البوت."
-    )
+    
+    # Check if user provided the ID directly with the command
+    if context.args and context.args[0].isdigit():
+        target_id = int(context.args[0])
+        banned_users.add(target_id)
+        blocked_users.discard(target_id)
+        flagged_users.discard(target_id)
+        await update.message.reply_text(
+            f"تم حظر المستخدم برقم {target_id} من استخدام هذا البوت."
+        )
+    else:
+        # Ask for the user ID
+        waiting_for_input[user_id] = "ban"
+        await update.message.reply_text("اكتب ID المستخدم")
 
 
 async def admin_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -323,17 +359,21 @@ async def admin_block(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     if not user_is_admin(user_id):
         await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
         return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("يرجى إدخال رقم المستخدم المراد منعه.")
-        return
-    target_id = int(context.args[0])
-    if target_id in banned_users:
-        await update.message.reply_text("هذا المستخدم محظور بالفعل.")
-        return
-    blocked_users.add(target_id)
-    await update.message.reply_text(
-        f"تم منع المستخدم برقم {target_id} مؤقتًا من استخدام هذا البوت."
-    )
+    
+    # Check if user provided the ID directly with the command
+    if context.args and context.args[0].isdigit():
+        target_id = int(context.args[0])
+        if target_id in banned_users:
+            await update.message.reply_text("هذا المستخدم محظور بالفعل.")
+            return
+        blocked_users.add(target_id)
+        await update.message.reply_text(
+            f"تم منع المستخدم برقم {target_id} مؤقتًا من استخدام هذا البوت."
+        )
+    else:
+        # Ask for the user ID
+        waiting_for_input[user_id] = "block"
+        await update.message.reply_text("اكتب ID المستخدم")
 
 
 async def admin_flag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -342,14 +382,18 @@ async def admin_flag(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not user_is_admin(user_id):
         await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
         return
-    if not context.args or not context.args[0].isdigit():
-        await update.message.reply_text("يرجى إدخال رقم المستخدم المراد وضع علامة عليه.")
-        return
-    target_id = int(context.args[0])
-    flagged_users.add(target_id)
-    await update.message.reply_text(
-        f"تم وضع علامة على المستخدم برقم {target_id} كمشتبه به للمراجعة."
-    )
+    
+    # Check if user provided the ID directly with the command
+    if context.args and context.args[0].isdigit():
+        target_id = int(context.args[0])
+        flagged_users.add(target_id)
+        await update.message.reply_text(
+            f"تم وضع علامة على المستخدم برقم {target_id} كمشتبه به للمراجعة."
+        )
+    else:
+        # Ask for the user ID
+        waiting_for_input[user_id] = "flag"
+        await update.message.reply_text("اكتب ID المستخدم")
 
 
 async def admin_change_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -359,12 +403,95 @@ async def admin_change_invite(update: Update, context: ContextTypes.DEFAULT_TYPE
     if not user_is_admin(user_id):
         await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
         return
-    if not context.args:
-        await update.message.reply_text("يرجى إدخال رمز الدعوة الجديد.")
+    
+    # Check if user provided the code directly with the command
+    if context.args:
+        new_code = context.args[0]
+        invite_code = new_code
+        await update.message.reply_text(f"تم تحديث رمز الدعوة إلى: {invite_code}")
+    else:
+        # Ask for the new invite code
+        waiting_for_input[user_id] = "change_invite"
+        await update.message.reply_text("اكتب رمز الدعوة الجديد")
+
+
+async def admin_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Toggle commands on/off (admin only)."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
         return
-    new_code = context.args[0]
-    invite_code = new_code
-    await update.message.reply_text(f"تم تحديث رمز الدعوة إلى: {invite_code}")
+    
+    if not context.args:
+        # Show current status of all commands
+        status_text = "حالة الأوامر الحالية:\n\n"
+        for cmd, enabled in command_states.items():
+            status = "مفعل" if enabled else "معطل"
+            status_text += f"/{cmd}: {status}\n"
+        status_text += "\nلتفعيل/تعطيل أمر: /toggle <اسم الأمر>"
+        await update.message.reply_text(status_text)
+        return
+    
+    command_name = context.args[0].lower()
+    if command_name in command_states:
+        command_states[command_name] = not command_states[command_name]
+        status = "مفعل" if command_states[command_name] else "معطل"
+        await update.message.reply_text(f"تم {status} الأمر /{command_name}")
+    else:
+        await update.message.reply_text("أمر غير صحيح. الأوامر المتاحة: movies, series, status, invite, help")
+
+
+async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handle admin input when waiting for specific data."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id) or user_id not in waiting_for_input:
+        return
+    
+    command_type = waiting_for_input[user_id]
+    user_input = update.message.text.strip()
+    
+    if command_type == "ban":
+        if user_input.isdigit():
+            target_id = int(user_input)
+            banned_users.add(target_id)
+            blocked_users.discard(target_id)
+            flagged_users.discard(target_id)
+            await update.message.reply_text(
+                f"تم حظر المستخدم برقم {target_id} من استخدام هذا البوت."
+            )
+        else:
+            await update.message.reply_text("رقم غير صحيح. يرجى إدخال رقم صحيح.")
+    
+    elif command_type == "block":
+        if user_input.isdigit():
+            target_id = int(user_input)
+            if target_id in banned_users:
+                await update.message.reply_text("هذا المستخدم محظور بالفعل.")
+            else:
+                blocked_users.add(target_id)
+                await update.message.reply_text(
+                    f"تم منع المستخدم برقم {target_id} مؤقتًا من استخدام هذا البوت."
+                )
+        else:
+            await update.message.reply_text("رقم غير صحيح. يرجى إدخال رقم صحيح.")
+    
+    elif command_type == "flag":
+        if user_input.isdigit():
+            target_id = int(user_input)
+            flagged_users.add(target_id)
+            await update.message.reply_text(
+                f"تم وضع علامة على المستخدم برقم {target_id} كمشتبه به للمراجعة."
+            )
+        else:
+            await update.message.reply_text("رقم غير صحيح. يرجى إدخال رقم صحيح.")
+    
+    elif command_type == "change_invite":
+        global invite_code
+        invite_code = user_input
+        await update.message.reply_text(f"تم تحديث رمز الدعوة إلى: {invite_code}")
+    
+    # Remove from waiting list
+    del waiting_for_input[user_id]
 
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -376,15 +503,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     if user_id in banned_users:
         return
     if query.data == "movies":
+        if not command_states.get("movies", True):
+            await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
+            return
         # Use a regular message instead of editing to maintain clarity
         lines = [f"{idx+1}. {title}" for idx, title in enumerate(MOVIES)]
         text = "قائمة الأفلام المتاحة:\n" + "\n".join(lines)
         await query.message.reply_text(text)
     elif query.data == "series":
+        if not command_states.get("series", True):
+            await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
+            return
         lines = [f"{idx+1}. {title}" for idx, title in enumerate(SERIES)]
         text = "قائمة المسلسلات المتاحة:\n" + "\n".join(lines)
         await query.message.reply_text(text)
     elif query.data == "status":
+        if not command_states.get("status", True):
+            await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
+            return
         online = fetch_website_status()
         if online:
             text = "الموقع يعمل بشكل طبيعي حاليًا."
@@ -436,6 +572,12 @@ def main() -> None:
 
     # Callback query handler for inline buttons
     application.add_handler(CallbackQueryHandler(handle_callback))
+
+    # Admin toggle command
+    application.add_handler(CommandHandler("toggle", admin_toggle))
+
+    # Handle admin input when waiting for data
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_input))
 
     # Unknown command handler should be last
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
