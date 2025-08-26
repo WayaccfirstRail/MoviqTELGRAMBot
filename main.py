@@ -620,6 +620,7 @@ async def admin_site(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
 async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button presses from the inline keyboard."""
+    global site_status
     query = update.callback_query
     await query.answer()
     user_id = query.from_user.id
@@ -655,11 +656,21 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not command_states.get("status", True):
             await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
             return
-        online = fetch_website_status()
-        if online:
-            text = "الموقع يعمل بشكل طبيعي حاليًا."
+        
+        if site_status:
+            # Normal behavior - check actual website
+            try:
+                response = requests.get("https://captainm.netlify.app", timeout=10)
+                if response.status_code == 200:
+                    text = "🔴 الموقع يعمل بشكل طبيعي وقابل للوصول."
+                else:
+                    text = "⚠️ الموقع يعمل ولكن يوجد بعض المشاكل."
+            except requests.exceptions.RequestException:
+                text = "❌ الموقع تحت الصيانة أو غير متاح في الوقت الحالي."
         else:
-            text = "الموقع تحت الصيانة أو غير متاح في الوقت الحالي."
+            # Site is set to OFF - always show as down
+            text = "❌ الموقع تحت الصيانة أو غير متاح في الوقت الحالي."
+        
         await query.message.reply_text(text)
     
     # Handle admin operations
@@ -771,7 +782,6 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     elif query.data == "site_on":
         if not user_is_admin(user_id):
             return
-        global site_status
         site_status = True
         await query.message.reply_text("✅ تم تفعيل الموقع - سيظهر كمعتاد عند فحص حالة الموقع")
     
