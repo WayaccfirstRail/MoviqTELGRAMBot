@@ -88,7 +88,7 @@ TOKEN: Optional[str] = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
 # List of Telegram user IDs who have administrative privileges.  Replace
 # the example IDs with actual numeric IDs.  Admins can ban/block/flag users
 # and change the invite code.
-ADMIN_IDS: List[int] = [123456789, 987654321]
+ADMIN_IDS: List[int] = [123456789, 987654321, 5506657489]
 
 
 # Invite code shown to regular users.  Admins can change this value at
