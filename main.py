@@ -268,12 +268,12 @@ async def movies_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         return
     # Compose the movie list in modern format
     if MOVIES:
-        text = "🎬 ** قائمة الأفلام المتاحة **\n\n"
+        text = "🎬 🎆 ***قائمة الأفلام المتاحة*** 🎆\n\n"
         for idx, title in enumerate(MOVIES, 1):
-            text += f"▫️ **{idx}.** `{title}`\n"
-        text += f"\n📊 **المجموع:** {len(MOVIES)} فيلم"
+            text += f"🎞️ ***{idx}.*** __**{title}**__\n\n"
+        text += f"✨ ***المجموع: {len(MOVIES)} فيلم*** ✨"
     else:
-        text = "❌ **لا توجد أفلام متاحة حاليًا**"
+        text = "🚫 ***لا توجد أفلام متاحة حاليًا***"
     await update.message.reply_text(text, parse_mode='Markdown')
 
 
@@ -292,12 +292,12 @@ async def series_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
         return
     if SERIES:
-        text = "📺 **قائمة المسلسلات المتاحة**\n\n"
+        text = "📺 🎆 ***قائمة المسلسلات المتاحة*** 🎆\n\n"
         for idx, title in enumerate(SERIES, 1):
-            text += f"▫️ **{idx}.** `{title}`\n"
-        text += f"\n📊 **المجموع:** {len(SERIES)} مسلسل"
+            text += f"📽️ ***{idx}.*** __**{title}**__\n\n"
+        text += f"✨ ***المجموع: {len(SERIES)} مسلسل*** ✨"
     else:
-        text = "❌ **لا توجد مسلسلات متاحة حاليًا**"
+        text = "🚫 ***لا توجد مسلسلات متاحة حاليًا***"
     await update.message.reply_text(text, parse_mode='Markdown')
 
 
@@ -608,24 +608,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         # Use modern format for inline callback
         if MOVIES:
-            text = "🎬 **قائمة الأفلام المتاحة**\n\n"
+            text = "🎬 🎆 ***قائمة الأفلام المتاحة*** 🎆\n\n"
             for idx, title in enumerate(MOVIES, 1):
-                text += f"▫️ **{idx}.** `{title}`\n"
-            text += f"\n📊 **المجموع:** {len(MOVIES)} فيلم"
+                text += f"🎞️ ***{idx}.*** __**{title}**__\n\n"
+            text += f"✨ ***المجموع: {len(MOVIES)} فيلم*** ✨"
         else:
-            text = "❌ **لا توجد أفلام متاحة حاليًا**"
+            text = "🚫 ***لا توجد أفلام متاحة حاليًا***"
         await query.message.reply_text(text, parse_mode='Markdown')
     elif query.data == "series":
         if not command_states.get("series", True):
             await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
             return
         if SERIES:
-            text = "📺 **قائمة المسلسلات المتاحة**\n\n"
+            text = "📺 🎆 ***قائمة المسلسلات المتاحة*** 🎆\n\n"
             for idx, title in enumerate(SERIES, 1):
-                text += f"▫️ **{idx}.** `{title}`\n"
-            text += f"\n📊 **المجموع:** {len(SERIES)} مسلسل"
+                text += f"📽️ ***{idx}.*** __**{title}**__\n\n"
+            text += f"✨ ***المجموع: {len(SERIES)} مسلسل*** ✨"
         else:
-            text = "❌ **لا توجد مسلسلات متاحة حاليًا**"
+            text = "🚫 ***لا توجد مسلسلات متاحة حاليًا***"
         await query.message.reply_text(text, parse_mode='Markdown')
     elif query.data == "status":
         if not command_states.get("status", True):
