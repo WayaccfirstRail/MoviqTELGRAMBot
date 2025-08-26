@@ -56,6 +56,8 @@ import logging
 from typing import List, Optional
 
 import requests
+import psycopg2
+import json
 from bs4 import BeautifulSoup
 from telegram import (
     Update,
@@ -83,7 +85,10 @@ from telegram.ext import (
 
 # TODO: Replace this with your actual bot token, or set BOT_TOKEN in the
 # environment and leave TOKEN as None to fetch it automatically.
-TOKEN: Optional[str] = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+TOKEN: Optional[str] = os.getenv("BOT_TOKEN", "7369811341:AAE44hZVwA7e9bbVAzYs2e0ZpnCFJKbGoqU")
+
+# Database connection
+DATABASE_URL = os.environ.get('DATABASE_URL')
 
 # List of Telegram user IDs who have administrative privileges.  Replace
 # the example IDs with actual numeric IDs.  Admins can ban/block/flag users
@@ -159,6 +164,119 @@ def fetch_website_status(url: str = "https://captainm.netlify.app") -> bool:
         return response.status_code == 200
     except requests.RequestException:
         return False
+
+
+# -----------------------------------------------------------------------------
+# Database functions for persistence
+# -----------------------------------------------------------------------------
+
+def init_database():
+    """Initialize database tables and load initial data."""
+    if not DATABASE_URL:
+        print("Warning: No DATABASE_URL found. Data will not persist between restarts.")
+        return
+    
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        # Create tables
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS bot_data (
+                id SERIAL PRIMARY KEY,
+                data_type VARCHAR(50) UNIQUE,
+                content TEXT
+            )
+        ''')
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        print("Database initialized successfully")
+        
+    except Exception as e:
+        print(f"Database initialization failed: {e}")
+
+def save_to_database(data_type: str, data):
+    """Save data to database."""
+    if not DATABASE_URL:
+        return
+    
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        json_data = json.dumps(data, ensure_ascii=False)
+        cur.execute('''
+            INSERT INTO bot_data (data_type, content) VALUES (%s, %s)
+            ON CONFLICT (data_type) DO UPDATE SET content = EXCLUDED.content
+        ''', (data_type, json_data))
+        
+        conn.commit()
+        cur.close()
+        conn.close()
+        
+    except Exception as e:
+        print(f"Failed to save {data_type}: {e}")
+
+def load_from_database(data_type: str, default_value):
+    """Load data from database."""
+    if not DATABASE_URL:
+        return default_value
+    
+    try:
+        conn = psycopg2.connect(DATABASE_URL)
+        cur = conn.cursor()
+        
+        cur.execute('SELECT content FROM bot_data WHERE data_type = %s', (data_type,))
+        result = cur.fetchone()
+        
+        cur.close()
+        conn.close()
+        
+        if result:
+            return json.loads(result[0])
+        else:
+            # Save default value if not exists
+            save_to_database(data_type, default_value)
+            return default_value
+            
+    except Exception as e:
+        print(f"Failed to load {data_type}: {e}")
+        return default_value
+
+def save_all_data():
+    """Save all bot data to database."""
+    global MOVIES, SERIES, banned_users, blocked_users, flagged_users
+    global invite_code, command_states, site_status
+    
+    save_to_database('movies', MOVIES)
+    save_to_database('series', SERIES)
+    save_to_database('banned_users', list(banned_users))
+    save_to_database('blocked_users', list(blocked_users))
+    save_to_database('flagged_users', list(flagged_users))
+    save_to_database('invite_code', invite_code)
+    save_to_database('command_states', command_states)
+    save_to_database('site_status', site_status)
+
+def load_all_data():
+    """Load all bot data from database."""
+    global MOVIES, SERIES, banned_users, blocked_users, flagged_users
+    global invite_code, command_states, site_status
+    
+    # Load movies and series with current data as default
+    MOVIES = load_from_database('movies', MOVIES)
+    SERIES = load_from_database('series', SERIES)
+    
+    # Load user lists
+    banned_users = set(load_from_database('banned_users', []))
+    blocked_users = set(load_from_database('blocked_users', []))
+    flagged_users = set(load_from_database('flagged_users', []))
+    
+    # Load settings
+    invite_code = load_from_database('invite_code', invite_code)
+    command_states = load_from_database('command_states', command_states)
+    site_status = load_from_database('site_status', site_status)
 
 
 def parse_titles_from_page(url: str, selector: str = "h3") -> List[str]:
@@ -501,14 +619,17 @@ async def handle_admin_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
     elif command_type == "change_invite":
         global invite_code
         invite_code = user_input
+        save_to_database('invite_code', invite_code)  # Save to database
         await update.message.reply_text(f"تم تحديث رمز الدعوة إلى: {invite_code}")
     
     elif command_type == "add_movie_name":
         MOVIES.append(user_input.strip())
+        save_to_database('movies', MOVIES)  # Save to database
         await update.message.reply_text(f"✅ تم إضافة الفيلم: {user_input.strip()}")
     
     elif command_type == "add_series_name":
         SERIES.append(user_input.strip())
+        save_to_database('series', SERIES)  # Save to database
         await update.message.reply_text(f"✅ تم إضافة المسلسل: {user_input.strip()}")
     
     elif command_type == "move_position":
@@ -783,12 +904,14 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         if not user_is_admin(user_id):
             return
         site_status = True
+        save_to_database('site_status', site_status)  # Save to database
         await query.message.reply_text("✅ تم تفعيل الموقع - سيظهر كمعتاد عند فحص حالة الموقع")
     
     elif query.data == "site_off":
         if not user_is_admin(user_id):
             return
         site_status = False
+        save_to_database('site_status', site_status)  # Save to database
         await query.message.reply_text("❌ تم إيقاف الموقع - سيظهر كمعطل عند فحص حالة الموقع")
 
 
@@ -810,6 +933,10 @@ def main() -> None:
         format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
         level=logging.INFO,
     )
+
+    # Initialize database and load saved data
+    init_database()
+    load_all_data()
 
     if not TOKEN or TOKEN == "YOUR_BOT_TOKEN":
         raise RuntimeError(
