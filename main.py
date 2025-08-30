@@ -1,9 +1,9 @@
 """
-Telegram Bot for Captain M Platform (Arabic)
+Telegram Bot for موفيك بوت Platform (Arabic)
 -------------------------------------------
 
 This script implements a Telegram bot in Python that mirrors basic
-functionality of the Captain M website.  It lists the movies and
+functionality of the موفيك بوت website.  It lists the movies and
 series currently available on the site, checks the website status,
 and provides a suite of administrative commands for managing users
 and invite codes.  All bot responses are written in Arabic to
@@ -322,17 +322,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Craft the welcome message in Arabic
     welcome_text = (
         f"مرحبًا {update.effective_user.first_name}!\n\n"
-        "هذا هو بوت كابتن م حيث يمكنك معرفة الأفلام والمسلسلات المتاحة "
+        "هذا هو موفيك بوت حيث يمكنك معرفة الأفلام والمسلسلات المتاحة "
         "وحالة الموقع الحالية.\n\n"
         f"رمز الدعوة الخاص بك هو: {invite_code}\n\n"
         "استخدم الأزرار أدناه أو الأوامر النصية لاستكشاف المحتوى."
     )
     # Inline keyboard with options
     keyboard = [
-        [
-            InlineKeyboardButton("🎬 الأفلام", callback_data="movies"),
-            InlineKeyboardButton("📺 المسلسلات", callback_data="series"),
-        ],
+        [InlineKeyboardButton("🎬 الأفلام", callback_data="movies")],
         [InlineKeyboardButton("🌐 حالة الموقع", callback_data="status")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
@@ -414,10 +411,10 @@ async def series_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         await update.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
         return
     if SERIES:
-        text = "📺 🎆 ***قائمة المسلسلات المتاحة*** 🎆\n\n"
+        text = "📺 ***قائمة المسلسلات المتاحة***\n\n"
         for idx, title in enumerate(SERIES, 1):
             text += f"📽️ ***{idx}.*** __**{title}**__\n\n"
-        text += f"✨ ***المجموع: {len(SERIES)} مسلسل*** ✨"
+        text += f"***المجموع: {len(SERIES)} مسلسل***"
     else:
         text = "🚫 ***لا توجد مسلسلات متاحة حاليًا***"
     await update.message.reply_text(text, parse_mode='Markdown')
@@ -754,10 +751,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             return
         # Use modern format for inline callback
         if MOVIES:
-            text = "🎬 🎆 ***قائمة الأفلام المتاحة*** 🎆\n\n"
+            text = "🎬 ***قائمة الأفلام المتاحة***\n\n"
             for idx, title in enumerate(MOVIES, 1):
                 text += f"🎞️ ***{idx}.*** __**{title}**__\n\n"
-            text += f"✨ ***المجموع: {len(MOVIES)} فيلم*** ✨"
+            text += f"***المجموع: {len(MOVIES)} فيلم***"
         else:
             text = "🚫 ***لا توجد أفلام متاحة حاليًا***"
         await query.message.reply_text(text, parse_mode='Markdown')
@@ -766,10 +763,10 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             await query.message.reply_text("هذا الأمر معطل حاليًا من قبل الإدارة.")
             return
         if SERIES:
-            text = "📺 🎆 ***قائمة المسلسلات المتاحة*** 🎆\n\n"
+            text = "📺 ***قائمة المسلسلات المتاحة***\n\n"
             for idx, title in enumerate(SERIES, 1):
                 text += f"📽️ ***{idx}.*** __**{title}**__\n\n"
-            text += f"✨ ***المجموع: {len(SERIES)} مسلسل*** ✨"
+            text += f"***المجموع: {len(SERIES)} مسلسل***"
         else:
             text = "🚫 ***لا توجد مسلسلات متاحة حاليًا***"
         await query.message.reply_text(text, parse_mode='Markdown')
@@ -785,7 +782,7 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 if response.status_code == 200:
                     text = "🔴 الموقع يعمل بشكل طبيعي وقابل للوصول."
                 else:
-                    text = "⚠️ الموقع يعمل ولكن يوجد بعض المشاكل."
+                    text = "الموقع يعمل بكفاءه."
             except requests.exceptions.RequestException:
                 text = "❌ الموقع تحت الصيانة أو غير متاح في الوقت الحالي."
         else:
