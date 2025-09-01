@@ -369,6 +369,7 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         "/series - عرض قائمة المسلسلات المتاحة\n"
         "/status - التحقق من حالة موقع كابتن م\n"
         "/invite - عرض رمز الدعوة الحالي\n"
+        "/ticket - إرسال تذكرة (اقتراح، بلاغ، تحدث مع المالك)\n"
         "/help - عرض هذه الرسالة\n"
     )
     # Only show admin commands to admins
@@ -384,6 +385,10 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
             "/remove - حذف فيلم أو مسلسل\n"
             "/move - تحريك فيلم أو مسلسل إلى موضع جديد\n"
             "/site - تحكم في حالة الموقع (ON/OFF)\n"
+            "\nإدارة التذاكر:\n"
+            "/tickets - عرض جميع التذاكر\n"
+            "/ticket_users - عرض المستخدمين الذين أرسلوا تذاكر\n"
+            "/pending_tickets - عرض عدد التذاكر المفتوحة\n"
         )
     await update.message.reply_text(help_text)
 
