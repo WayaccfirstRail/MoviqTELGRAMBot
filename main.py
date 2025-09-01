@@ -814,6 +814,24 @@ async def handle_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         
         await query.message.reply_text(text)
     
+    elif query.data == "ticket":
+        # Respect existing ban/block lists
+        if user_id in blocked_users:
+            await query.message.reply_text(
+                "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
+            )
+            return
+        # Show category options
+        keyboard = [
+            [InlineKeyboardButton("💡 اقتراح", callback_data="ticket_suggestion")],
+            [InlineKeyboardButton("⚠️ بلاغ", callback_data="ticket_report")],
+            [InlineKeyboardButton("📩 تحدث مع المالك", callback_data="ticket_owner")],
+        ]
+        await query.message.reply_text(
+            "اختر نوع التذكرة التي تريد إرسالها:",
+            reply_markup=InlineKeyboardMarkup(keyboard)
+        )
+    
     # Handle admin operations
     elif query.data == "add_movie":
         if not user_is_admin(user_id):
