@@ -87,7 +87,7 @@ from telegram.ext import (
 
 # TODO: Replace this with your actual bot token, or set BOT_TOKEN in the
 # environment and leave TOKEN as None to fetch it automatically.
-TOKEN: Optional[str] = os.getenv("BOT_TOKEN", "7820798678:AAEQq-2A9rT3klHNY_ueb1ZTYf2l_1NHtAU")
+TOKEN: Optional[str] = os.getenv("BOT_TOKEN")
 
 # Database connection
 DATABASE_URL = os.environ.get('DATABASE_URL')
