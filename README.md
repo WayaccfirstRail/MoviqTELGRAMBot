@@ -1,4 +1,4 @@
-# Captain M Telegram Bot
+# Moviq Telegram Bot
 
 This is an Arabic Telegram bot for the Captain M platform that provides movie and series listings, website status checking, and administrative controls.
 
