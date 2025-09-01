@@ -347,6 +347,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Inline keyboard with options
     keyboard = [
         [InlineKeyboardButton("🎬 الأفلام", callback_data="movies")],
+        [InlineKeyboardButton("📞 تواصل معنا", callback_data="ticket")],
         [InlineKeyboardButton("🌐 حالة الموقع", callback_data="status")],
     ]
     reply_markup = InlineKeyboardMarkup(keyboard)
