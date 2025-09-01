@@ -53,7 +53,9 @@ edit the `MOVIES` and `SERIES` lists accordingly.
 
 import os
 import logging
-from typing import List, Optional
+from datetime import datetime
+from zoneinfo import ZoneInfo
+from typing import List, Optional, Dict, Any
 
 import requests
 import psycopg2
@@ -122,6 +124,17 @@ waiting_for_input: dict[int, str] = {}
 admin_context: dict[int, dict] = {}
 # Site status control - affects status command behavior
 site_status: bool = True  # True = ON, False = OFF
+
+# ---------------------------------------------------------------------------
+# Ticketing System Variables
+# ---------------------------------------------------------------------------
+
+# This list will hold all tickets.  Each ticket is a dict with:
+# id, user_id, user_link, category, message, timestamp, closed (bool)
+tickets: List[Dict[str, Any]] = []
+
+# Map user_id -> category when waiting for the user to type their ticket message
+waiting_for_ticket: Dict[int, str] = {}
 
 
 # Static catalog taken from Captain M website (as of Aug 2025).  Each
@@ -248,7 +261,7 @@ def load_from_database(data_type: str, default_value):
 def save_all_data():
     """Save all bot data to database."""
     global MOVIES, SERIES, banned_users, blocked_users, flagged_users
-    global invite_code, command_states, site_status
+    global invite_code, command_states, site_status, tickets
     
     save_to_database('movies', MOVIES)
     save_to_database('series', SERIES)
@@ -258,11 +271,12 @@ def save_all_data():
     save_to_database('invite_code', invite_code)
     save_to_database('command_states', command_states)
     save_to_database('site_status', site_status)
+    save_to_database('tickets', tickets)
 
 def load_all_data():
     """Load all bot data from database."""
     global MOVIES, SERIES, banned_users, blocked_users, flagged_users
-    global invite_code, command_states, site_status
+    global invite_code, command_states, site_status, tickets
     
     # Load movies and series with current data as default
     MOVIES = load_from_database('movies', MOVIES)
@@ -277,6 +291,9 @@ def load_all_data():
     invite_code = load_from_database('invite_code', invite_code)
     command_states = load_from_database('command_states', command_states)
     site_status = load_from_database('site_status', site_status)
+    
+    # Load tickets
+    tickets = load_from_database('tickets', [])
 
 
 def parse_titles_from_page(url: str, selector: str = "h3") -> List[str]:
@@ -919,6 +936,201 @@ async def unknown_command(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await update.message.reply_text("عذرًا، لم أفهم هذا الأمر. استخدم /help لمعرفة الأوامر المتاحة.")
 
 
+# ---------------------------------------------------------------------------
+# Ticketing System Functions
+# ---------------------------------------------------------------------------
+
+async def ticket_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Allow a user to create a ticket by choosing a category."""
+    user_id = update.effective_user.id
+    # Respect existing ban/block lists
+    if user_id in banned_users:
+        return
+    if user_id in blocked_users:
+        await update.message.reply_text(
+            "لقد تم حظرك مؤقتًا من استخدام هذا البوت. يرجى التواصل مع الإدارة."
+        )
+        return
+    # Show category options
+    keyboard = [
+        [InlineKeyboardButton("💡 اقتراح", callback_data="ticket_suggestion")],
+        [InlineKeyboardButton("⚠️ بلاغ", callback_data="ticket_report")],
+        [InlineKeyboardButton("📩 تحدث مع المالك", callback_data="ticket_owner")],
+    ]
+    await update.message.reply_text(
+        "اختر نوع التذكرة التي تريد إرسالها:",
+        reply_markup=InlineKeyboardMarkup(keyboard)
+    )
+
+
+async def handle_ticket_input(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Capture the user's message when they are creating a ticket."""
+    user_id = update.effective_user.id
+    # Only handle this message if we're expecting a ticket from the user
+    if user_id in waiting_for_ticket:
+        # Pop the category to avoid processing extra messages
+        category = waiting_for_ticket.pop(user_id)
+        message_text = update.message.text.strip()
+        # Create a unique ticket ID using the current timestamp (milliseconds)
+        now = datetime.now(ZoneInfo("Africa/Cairo"))
+        ticket_id = str(int(now.timestamp() * 1000))
+        # Build a clickable link for the user
+        user_link = f"[{update.effective_user.first_name}](tg://user?id={user_id})"
+        # Create the ticket record
+        ticket = {
+            "id": ticket_id,
+            "user_id": user_id,
+            "user_link": user_link,
+            "category": category,
+            "message": message_text,
+            "timestamp": now.strftime("%Y-%m-%d %H:%M"),
+            "closed": False,
+        }
+        tickets.append(ticket)
+        # Persist tickets
+        save_to_database('tickets', tickets)
+        # Confirm to the user
+        await update.message.reply_text(
+            "✅ تم إرسال تذكرتك بنجاح! سنتواصل معك قريبًا.",
+            parse_mode='Markdown'
+        )
+        # Forward to admins (owners).  Each admin receives a button to close the ticket.
+        text = (
+            "🎟️ **تذكرة جديدة**\n\n"
+            f"**النوع:** {category}\n"
+            f"**المرسل:** {user_link}\n"
+            f"**الوقت:** {ticket['timestamp']}\n"
+            f"**الرسالة:**\n{message_text}"
+        )
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔒 إغلاق التذكرة", callback_data=f"close_ticket_{ticket_id}")]
+        ])
+        for admin_id in ADMIN_IDS:
+            try:
+                await context.bot.send_message(
+                    chat_id=admin_id,
+                    text=text,
+                    reply_markup=reply_markup,
+                    parse_mode='Markdown'
+                )
+            except Exception:
+                # In case sending fails, we ignore the error
+                pass
+    else:
+        # If this message isn't part of a ticket, fall back to existing admin handler
+        await handle_admin_input(update, context)
+
+
+async def admin_view_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command: list all tickets with their status."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    if not tickets:
+        await update.message.reply_text("لا توجد تذاكر حالياً.")
+        return
+    lines = []
+    for idx, t in enumerate(tickets, 1):
+        status = "✅ مغلقة" if t.get("closed") else "🕒 مفتوحة"
+        lines.append(
+            f"{idx}. {t['user_link']} - {t['category']} - {t['timestamp']} - {status}"
+        )
+    msg = "📄 **قائمة التذاكر**\n\n" + "\n".join(lines)
+    keyboard = [
+        [InlineKeyboardButton("🧹 حذف التذاكر المغلقة", callback_data="clear_closed_tickets")]
+    ]
+    await update.message.reply_text(
+        msg,
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
+    )
+
+
+async def admin_view_ticket_users(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command: show unique users who submitted tickets."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    if not tickets:
+        await update.message.reply_text("لا توجد تذاكر حالياً.")
+        return
+    unique_links: List[str] = []
+    seen_ids = set()
+    for t in tickets:
+        if t['user_id'] not in seen_ids:
+            seen_ids.add(t['user_id'])
+            unique_links.append(t['user_link'])
+    msg = "👥 **المستخدمون الذين أرسلوا تذاكر:**\n\n" + "\n".join(
+        [f"{idx + 1}. {link}" for idx, link in enumerate(unique_links)]
+    )
+    await update.message.reply_text(msg, parse_mode='Markdown')
+
+
+async def admin_pending_tickets(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Admin command: count how many tickets are still open."""
+    user_id = update.effective_user.id
+    if not user_is_admin(user_id):
+        await update.message.reply_text("هذا الأمر مخصص للمسؤولين فقط.")
+        return
+    open_count = sum(1 for t in tickets if not t.get("closed"))
+    if open_count == 0:
+        msg = "✅ لا توجد تذاكر بحاجة إلى رد."
+    else:
+        msg = f"📬 يوجد {open_count} تذكرة بانتظار الرد."
+    await update.message.reply_text(msg)
+
+
+async def handle_ticket_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """
+    Handle inline button callbacks for ticketing:
+    - Choosing ticket category
+    - Closing a ticket
+    - Clearing all closed tickets
+    """
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = query.from_user.id
+    # User chooses the type of ticket
+    if data.startswith("ticket_"):
+        category = data.split("_", 1)[1]
+        waiting_for_ticket[user_id] = category
+        await query.message.reply_text("✉️ يرجى كتابة رسالتك الآن:")
+    # Admin clicks "close ticket"
+    elif data.startswith("close_ticket_"):
+        ticket_id = data[len("close_ticket_"):]
+        target_user_id = None
+        for t in tickets:
+            if t["id"] == ticket_id and not t.get("closed"):
+                t["closed"] = True
+                target_user_id = t["user_id"]
+                break
+        save_to_database('tickets', tickets)
+        # Edit the original admin message or send a new one confirming closure
+        try:
+            await query.edit_message_text("🔒 تم إغلاق التذكرة.", parse_mode='Markdown')
+        except Exception:
+            await query.message.reply_text("🔒 تم إغلاق التذكرة.", parse_mode='Markdown')
+        # Notify the original user (if available)
+        if target_user_id:
+            try:
+                await context.bot.send_message(
+                    chat_id=target_user_id,
+                    text="✅ تم إغلاق تذكرتك من قبل المسؤول.",
+                    parse_mode='Markdown'
+                )
+            except Exception:
+                pass
+    # Admin clicks "clear closed tickets"
+    elif data == "clear_closed_tickets":
+        # Filter out closed tickets
+        tickets[:] = [t for t in tickets if not t.get("closed")]
+        save_to_database('tickets', tickets)
+        await query.message.reply_text("🧹 تم حذف التذاكر المغلقة.")
+
+
 # -----------------------------------------------------------------------------
 # Bot initialization
 # -----------------------------------------------------------------------------
@@ -957,7 +1169,14 @@ def main() -> None:
     application.add_handler(CommandHandler("flag", admin_flag))
     application.add_handler(CommandHandler("change_invite", admin_change_invite))
 
-    # Callback query handler for inline buttons
+    # Ticketing system commands
+    application.add_handler(CommandHandler("ticket", ticket_command))
+    application.add_handler(CommandHandler("tickets", admin_view_tickets))
+    application.add_handler(CommandHandler("ticket_users", admin_view_ticket_users))
+    application.add_handler(CommandHandler("pending_tickets", admin_pending_tickets))
+
+    # Callback query handlers for inline buttons
+    application.add_handler(CallbackQueryHandler(handle_ticket_callback, pattern="^(ticket_|close_ticket_|clear_closed_tickets)"))
     application.add_handler(CallbackQueryHandler(handle_callback))
 
     # Admin management commands
@@ -967,8 +1186,8 @@ def main() -> None:
     application.add_handler(CommandHandler("move", admin_move))
     application.add_handler(CommandHandler("site", admin_site))
 
-    # Handle admin input when waiting for data
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_admin_input))
+    # Handle ticket input (higher priority than admin input)
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_ticket_input), group=1)
 
     # Unknown command handler should be last
     application.add_handler(MessageHandler(filters.COMMAND, unknown_command))
